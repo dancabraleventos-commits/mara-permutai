@@ -16,6 +16,8 @@ async function processarMensagem(telefone, mensagem) {
   const tipo = lead.tipo; // 'imobiliaria' ou 'corretor'
   const nome = lead.nome || '';
   const cidade = lead.cidade || '';
+  const indicadoPor = lead.indicado_por || null;
+  const corretoresAtivos = process.env.CORRETORES_ATIVOS || '?';
 
   console.log(`📩 ${tipo} ${nome}: ${mensagem.substring(0, 50)}`);
 
@@ -33,14 +35,14 @@ async function processarMensagem(telefone, mensagem) {
   const historico = leadAtualizado?.historico || [];
   const system = tipo === 'imobiliaria' ? MARA_SYSTEM_IMOBILIARIA : MARA_SYSTEM_CORRETOR;
 
-  // Adicionar contexto do lead
+  // Adicionar contexto do lead — inclui indicação e corretores ativos para o corretor
   const systemComContexto = `${system}
 
 DADOS DO LEAD:
 Nome: ${nome}
 Tipo: ${tipo}
 Cidade: ${cidade}
-Tentativas de contato: ${lead.tentativas || 1}`;
+Tentativas de contato: ${lead.tentativas || 1}${indicadoPor ? `\nIndicado por: ${indicadoPor}` : ''}${tipo === 'corretor' ? `\nCorretores ativos na plataforma: ${corretoresAtivos}` : ''}`;
 
   // Claude interpreta e responde
   const msgs = historico.slice(-10);
@@ -52,10 +54,18 @@ Tentativas de contato: ${lead.tentativas || 1}`;
   try {
     const parsed = JSON.parse(resposta.replace(/```json|```/g, '').trim());
 
+    // Registrar abordagem usada se presente
+    if (parsed.abordagem) {
+      const jaConverteu = parsed.acao === 'cadastrar' || parsed.acao === 'agendar_reuniao';
+      await upsertLead(telefone, {
+        abordagem_usada: parsed.abordagem,
+        ...(jaConverteu ? { abordagem_converteu: parsed.abordagem } : {})
+      });
+    }
+
     if (parsed.acao === 'agendar_reuniao') {
       await upsertLead(telefone, { status: 'agendando_reuniao' });
       await enviarMensagem(telefone, parsed.mensagem);
-      // Notifica Dan para confirmar horário
       await notificarDanReuniao(telefone, nome, cidade);
       await salvarHistorico(telefone, 'assistant', parsed.mensagem);
       return;
@@ -95,13 +105,21 @@ Tentativas de contato: ${lead.tentativas || 1}`;
 // ═══════════════════════════════════════
 
 async function dispararPrimeiraMensagem(lead) {
-  const { telefone, nome, tipo, cidade, corretores } = lead;
+  const { telefone, nome, tipo, cidade, corretores, indicado_por } = lead;
+  const corretoresAtivos = process.env.CORRETORES_ATIVOS || corretores || '?';
 
   let mensagem;
+  let abordagemInicial;
+
   if (tipo === 'imobiliaria') {
     mensagem = SCRIPTS.imobiliaria_msg1(nome, cidade, corretores);
+    abordagemInicial = 'frio';
+  } else if (indicado_por) {
+    mensagem = SCRIPTS.corretor_msg1_indicacao(nome, indicado_por, corretoresAtivos);
+    abordagemInicial = 'indicacao';
   } else {
     mensagem = SCRIPTS.corretor_msg1(nome, cidade);
+    abordagemInicial = 'frio';
   }
 
   await enviarMensagem(telefone, mensagem);
@@ -112,11 +130,12 @@ async function dispararPrimeiraMensagem(lead) {
     status: 'msg1_enviada',
     tentativas: 1,
     respondeu: false,
+    abordagem_usada: abordagemInicial,
     historico: [{ role: 'assistant', content: mensagem }],
     proxima_tentativa: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // +3 dias
   });
 
-  console.log(`✅ Msg1 enviada para ${tipo} ${nome} (${telefone})`);
+  console.log(`✅ Msg1 enviada para ${tipo} ${nome} (${telefone}) — abordagem: ${abordagemInicial}`);
 }
 
 // ═══════════════════════════════════════
@@ -140,7 +159,7 @@ async function enviarFollowUp(lead) {
   } else {
     mensagem = numTentativa === 1
       ? SCRIPTS.corretor_followup1(nome)
-      : SCRIPTS.corretor_followup2(nome);
+      : SCRIPTS.corretor_followup2(nome); // Framework 3 — fechamento
   }
 
   await enviarMensagem(telefone, mensagem);
@@ -152,6 +171,7 @@ async function enviarFollowUp(lead) {
   await upsertLead(telefone, {
     tentativas: numTentativa + 1,
     status: numTentativa >= 2 ? 'ultimo_followup' : 'followup1_enviado',
+    abordagem_usada: tipo === 'corretor' && numTentativa >= 2 ? 'fechamento' : undefined,
     proxima_tentativa: proximaTentativa,
     historico: [...(lead.historico || []), { role: 'assistant', content: mensagem }]
   });
