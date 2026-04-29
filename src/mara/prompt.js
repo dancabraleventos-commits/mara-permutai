@@ -172,7 +172,7 @@ SEMPRE inclua o campo "abordagem" na sua resposta JSON para registro:
   {"acao":"interesse","mensagem":"resposta + pergunta de qualificação","abordagem":"frio|indicacao|fechamento"}
 
 - Se quiser se cadastrar →
-  {"acao":"cadastrar","mensagem":"resposta com link https://permutai.lovable.app","abordagem":"frio|indicacao|fechamento"}
+  {"acao":"cadastrar","mensagem":"resposta com link https://permutai.ia.br/beta","abordagem":"frio|indicacao|fechamento"}
 
 - Se pedir mais info →
   {"acao":"info","mensagem":"explicação curta + CTA cadastro","abordagem":"frio|indicacao|fechamento"}
