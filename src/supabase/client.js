@@ -53,6 +53,27 @@ async function salvarHistorico(telefone, role, content) {
     .eq('id', lead.id);
 }
 
+// ═══════════════════════════════════════
+// LEADS NOVOS — para o cron de disparos
+// Busca leads salvos pelo n8n (status = 'novo')
+// que ainda não receberam msg1
+// ═══════════════════════════════════════
+async function getLeadsNovos(limite = 3) {
+  const { data } = await supabase
+    .from('leads_prospeccao')
+    .select('*')
+    .eq('status', 'novo')
+    .is('respondeu', null)  // nunca processado
+    .order('score', { ascending: false }) // prioriza leads com score maior
+    .order('created_at', { ascending: true }) // desempate: mais antigos primeiro
+    .limit(limite);
+
+  return data || [];
+}
+
+// ═══════════════════════════════════════
+// FOLLOW-UPS PENDENTES
+// ═══════════════════════════════════════
 async function getLeadsPendentesFollowup() {
   const agora = new Date();
   const { data } = await supabase
@@ -61,9 +82,17 @@ async function getLeadsPendentesFollowup() {
     .eq('respondeu', false)
     .neq('status', 'convertido')
     .neq('status', 'sem_resposta')
+    .neq('status', 'sem_interesse')
     .not('proxima_tentativa', 'is', null)
     .lte('proxima_tentativa', agora.toISOString());
   return data || [];
 }
 
-module.exports = { supabase, getLead, upsertLead, salvarHistorico, getLeadsPendentesFollowup };
+module.exports = {
+  supabase,
+  getLead,
+  upsertLead,
+  salvarHistorico,
+  getLeadsNovos,
+  getLeadsPendentesFollowup
+};
